@@ -639,7 +639,7 @@ Hyde Plumbing`;
   setTimeout(()=>showView("billing"),500);
 }
 
-function resetData(){
+async function resetData(){
   if(!confirm("Reset all shared prototype changes?")) return;
   try{
     const r = await fetch(API_BASE + "/api/reset-demo", {method:"POST"});
