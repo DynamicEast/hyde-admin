@@ -68,6 +68,7 @@ tr.clickable{cursor:pointer} tr.clickable:hover{background:#f8fbff}
 }
 @media (max-width:560px){.grid.kpis{grid-template-columns:1fr}.search{min-width:0;width:100%}}
 </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 </head>
 <body>
 <div class="mobilebar" id="mobileNav"></div>
@@ -208,13 +209,61 @@ const defaultData = {
 const API_BASE = "https://hyde-data.onrender.com";
 let data = structuredClone(defaultData);
 
+
+function ensureDemoBillingJobs(){
+  let changed=false;
+
+  const demoCustomers=[
+    {id:901,name:"Mason Carter",phone:"252-555-0177",email:"mason.carter@example.com",billing:"118 Bayberry Lane, Morehead City, NC"},
+    {id:902,name:"Laura Bennett",phone:"252-555-0114",email:"laura.bennett@example.com",billing:"47 Soundview Drive, Atlantic Beach, NC"},
+    {id:903,name:"Chris Dawson",phone:"252-555-0192",email:"chris.dawson@example.com",billing:"904 Cedar Point Blvd, Cedar Point, NC"}
+  ];
+  demoCustomers.forEach(c=>{
+    if(!data.customers.some(x=>x.id===c.id)){data.customers.push(c);changed=true;}
+  });
+
+  const demoJobs=[
+    {id:911,customerId:901,name:"Water Heater Replacement",address:"118 Bayberry Lane, Morehead City, NC",status:"Ready to Bill",estimate:2850,cost:1625,completed:"2026-08-27",notes:"Replaced 50-gallon electric water heater. Customer approved final amount."},
+    {id:912,customerId:902,name:"Kitchen & Bath Repairs",address:"47 Soundview Drive, Atlantic Beach, NC",status:"Ready to Bill",estimate:1475,cost:690,completed:"2026-08-28",notes:"Kitchen faucet, disposal connection, and two bath fixture repairs completed."},
+    {id:913,customerId:903,name:"Sewer Line Repair",address:"904 Cedar Point Blvd, Cedar Point, NC",status:"Ready to Bill",estimate:4250,cost:2380,completed:"2026-08-29",notes:"Excavated and repaired damaged sewer service. Final cleanup completed."}
+  ];
+  demoJobs.forEach(j=>{
+    if(!data.jobs.some(x=>x.id===j.id)){data.jobs.push(j);changed=true;}
+  });
+
+  const demoVendorInvoices=[
+    {id:921,vendor:"Ferguson",number:"F-88241",amount:1088.42,jobId:911,status:"Matched"},
+    {id:922,vendor:"Winsupply",number:"W-44108",amount:421.67,jobId:912,status:"Matched"},
+    {id:923,vendor:"Ferguson",number:"F-88312",amount:1795.18,jobId:913,status:"Matched"}
+  ];
+  demoVendorInvoices.forEach(i=>{
+    if(!data.vendorInvoices.some(x=>x.id===i.id)){data.vendorInvoices.push(i);changed=true;}
+  });
+
+  return changed;
+}
+
+async function saveSharedSilently(){
+  try{
+    await fetch(API_BASE + "/api/data",{
+      method:"PUT",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({data})
+    });
+  }catch(err){
+    console.error("Demo seed save failed",err);
+  }
+}
+
 async function loadSharedData(){
   try{
     const r = await fetch(API_BASE + "/api/data");
     if(!r.ok) throw new Error("Load failed");
     const payload = await r.json();
     data = payload.data || structuredClone(defaultData);
+    const demoChanged = ensureDemoBillingJobs();
     renderAll();
+    if(demoChanged) await saveSharedSilently();
     setSyncStatus("Shared data connected", "good");
   }catch(err){
     console.error(err);
@@ -428,16 +477,169 @@ function reviewInvoice(id){
  openModal(`<h3>Review ${i.vendor} #${i.number}</h3><p><strong>${money(i.amount)}</strong></p><div class="field"><label>Assign to Job</label><select id="reviewJob"><option value="">Unassigned</option>${opts}</select></div><div class="modal-actions"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="assignInvoice(${i.id})">Save Match</button></div>`)
 }
 function assignInvoice(id){const i=data.vendorInvoices.find(x=>x.id===id);i.jobId=reviewJob.value?+reviewJob.value:null;i.status=i.jobId?"Matched":"Needs Review";closeModal();save()}
+
 function createCustomerInvoice(jobId){
- const j=job(jobId), c=customer(j.customerId);
- openModal(`<h3>Create Customer Invoice</h3><div class="formgrid"><div class="field"><label>Customer</label><input value="${c.name}" disabled></div><div class="field"><label>Job</label><input value="${j.name}" disabled></div><div class="field"><label>Invoice Total</label><input id="ctotal" type="number" value="${j.estimate}"></div><div class="field"><label>Payment Terms</label><select id="cterms"><option>Due on receipt</option><option>Net 15</option><option selected>Net 30</option></select></div><div class="field full"><label>Description</label><textarea id="cdesc" rows="4">Plumbing services for ${j.name}.</textarea></div></div><div class="modal-actions"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="finalizeCustomerInvoice(${j.id})">Create Invoice</button></div>`)
+  const j=job(jobId), c=customer(j.customerId);
+  openModal(`<h3>Create Customer Invoice</h3>
+    <div class="formgrid">
+      <div class="field"><label>Customer</label><input value="${c.name}" disabled></div>
+      <div class="field"><label>Email</label><input value="${c.email||""}" disabled></div>
+      <div class="field"><label>Job</label><input value="${j.name}" disabled></div>
+      <div class="field"><label>Invoice Total</label><input id="ctotal" type="number" step="0.01" value="${j.estimate}"></div>
+      <div class="field"><label>Payment Terms</label><select id="cterms"><option>Due on receipt</option><option>Net 15</option><option selected>Net 30</option></select></div>
+      <div class="field full"><label>Description</label><textarea id="cdesc" rows="4">Plumbing services for ${j.name}.</textarea></div>
+    </div>
+    <div class="notice" style="margin-top:14px">
+      Create & Email downloads the PDF invoice and opens a new email addressed to the customer. Attach the downloaded PDF, review, and send.
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn" onclick="finalizeCustomerInvoice(${j.id},false)">Create Only</button>
+      <button class="btn primary" onclick="finalizeCustomerInvoice(${j.id},true)">Create & Email</button>
+    </div>`)
 }
-function finalizeCustomerInvoice(jobId){
- const j=job(jobId), total=+ctotal.value||0;
- data.customerInvoices.push({id:Date.now(),number:"INV-"+(1500+data.customerInvoices.length+1),jobId,total,balance:total,status:"Open"});
- j.status="Invoiced";closeModal();save();showView("billing");
+
+function finalizeCustomerInvoice(jobId,emailAfter=false){
+  const j=job(jobId);
+  const total=+document.getElementById("ctotal").value||0;
+  const terms=document.getElementById("cterms").value;
+  const description=document.getElementById("cdesc").value.trim()||`Plumbing services for ${j.name}.`;
+  const number="INV-"+(1500+data.customerInvoices.length+1);
+  const today=new Date().toISOString().slice(0,10);
+
+  const invoice={id:Date.now(),number,jobId,total,balance:total,status:"Open",date:today,terms,description};
+  data.customerInvoices.push(invoice);
+  j.status="Invoiced";
+  closeModal();
+  save();
+
+  if(emailAfter){
+    downloadInvoicePDF(invoice);
+    setTimeout(()=>openInvoiceEmail(invoice),500);
+  }else{
+    showView("billing");
+  }
 }
-async function resetData(){
+
+function formatInvoiceDate(d){
+  if(!d)return "";
+  const p=d.split("-");
+  return p.length===3?`${p[1]}/${p[2]}/${p[0]}`:d;
+}
+
+function downloadInvoicePDF(invoice){
+  const j=job(invoice.jobId),c=customer(j.customerId);
+
+  if(!window.jspdf||!window.jspdf.jsPDF){
+    alert("PDF generator did not load. Refresh Hyde and try again.");
+    return;
+  }
+
+  const {jsPDF}=window.jspdf;
+  const doc=new jsPDF({unit:"pt",format:"letter"});
+  const left=54,right=558;
+  let y=58;
+
+  doc.setFont("helvetica","bold");
+  doc.setFontSize(24);
+  doc.text("HYDE",left,y);
+  doc.setFontSize(10);
+  doc.setFont("helvetica","normal");
+  doc.text("Plumbing Services",left,y+16);
+
+  doc.setFont("helvetica","bold");
+  doc.setFontSize(22);
+  doc.text("INVOICE",right,y,{align:"right"});
+
+  y+=62;
+  doc.setDrawColor(210);
+  doc.line(left,y,right,y);
+  y+=30;
+
+  doc.setFontSize(10);
+  doc.setFont("helvetica","bold");
+  doc.text("Bill To",left,y);
+  doc.setFont("helvetica","normal");
+  y+=16;
+  doc.text(String(c.name||""),left,y);
+  if(c.billing){y+=15;doc.text(String(c.billing),left,y);}
+  if(c.email){y+=15;doc.text(String(c.email),left,y);}
+  if(c.phone){y+=15;doc.text(String(c.phone),left,y);}
+
+  let my=y-46;
+  const metaX=390;
+  doc.setFont("helvetica","bold");
+  doc.text("Invoice #",metaX,my);
+  doc.setFont("helvetica","normal");
+  doc.text(invoice.number,right,my,{align:"right"});
+  my+=18;
+  doc.setFont("helvetica","bold");
+  doc.text("Date",metaX,my);
+  doc.setFont("helvetica","normal");
+  doc.text(formatInvoiceDate(invoice.date),right,my,{align:"right"});
+  my+=18;
+  doc.setFont("helvetica","bold");
+  doc.text("Terms",metaX,my);
+  doc.setFont("helvetica","normal");
+  doc.text(invoice.terms||"Net 30",right,my,{align:"right"});
+
+  y=Math.max(y+42,my+38);
+  doc.setFillColor(245,245,245);
+  doc.rect(left,y,right-left,28,"F");
+  doc.setFont("helvetica","bold");
+  doc.text("Description",left+8,y+18);
+  doc.text("Amount",right-8,y+18,{align:"right"});
+
+  y+=46;
+  doc.setFont("helvetica","normal");
+  const desc=doc.splitTextToSize(invoice.description||j.name,350);
+  doc.text(desc,left+8,y);
+  doc.text(money(invoice.total),right-8,y,{align:"right"});
+  y+=Math.max(36,desc.length*13+12);
+
+  doc.line(left,y,right,y);
+  y+=28;
+  doc.setFont("helvetica","bold");
+  doc.setFontSize(12);
+  doc.text("Total",430,y);
+  doc.text(money(invoice.total),right,y,{align:"right"});
+
+  y+=52;
+  doc.setFont("helvetica","normal");
+  doc.setFontSize(9);
+  doc.text(`Job: ${j.name}`,left,y);
+  y+=14;
+  doc.text(`Service Address: ${j.address||""}`,left,y);
+  y+=32;
+  doc.text("Thank you for your business.",left,y);
+
+  const safeName=String(c.name||"Customer").replace(/[^a-z0-9]+/gi,"-").replace(/^-|-$/g,"");
+  doc.save(`${invoice.number}-${safeName}.pdf`);
+}
+
+function openInvoiceEmail(invoice){
+  const j=job(invoice.jobId),c=customer(j.customerId);
+
+  if(!c.email){
+    alert("This customer does not have an email address saved.");
+    showView("billing");
+    return;
+  }
+
+  const subject=`Invoice ${invoice.number} - Hyde Plumbing`;
+  const body=`Hi ${c.name},
+
+Attached is invoice ${invoice.number} for ${j.name} in the amount of ${money(invoice.total)}.
+
+Thank you for your business.
+
+Hyde Plumbing`;
+
+  window.location.href=`mailto:${encodeURIComponent(c.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  setTimeout(()=>showView("billing"),500);
+}
+
+function resetData(){
   if(!confirm("Reset all shared prototype changes?")) return;
   try{
     const r = await fetch(API_BASE + "/api/reset-demo", {method:"POST"});
